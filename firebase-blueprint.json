@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "Analysis": {
+      "title": "Location Analysis",
+      "description": "Consolidated analysis of problems in a specific location.",
+      "type": "object",
+      "properties": {
+        "locationName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "problems": {
+          "type": "array",
+          "description": "List of top 10 identified problems"
+        },
+        "marketInsights": { "type": "object" },
+        "heatmapData": { "type": "object" }
+      },
+      "required": ["locationName", "createdAt", "problems"]
+    },
+    "SavedProblem": {
+      "title": "Saved Problem",
+      "description": "A problem saved by a user for later review.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "problemId": { "type": "string" },
+        "locationName": { "type": "string" },
+        "problemTitle": { "type": "string" },
+        "savedAt": { "type": "string", "format": "date-time" },
+        "details": { "type": "object" }
+      },
+      "required": ["userId", "problemId", "problemTitle", "savedAt"]
+    }
+  },
+  "firestore": {
+    "/analyses/{analysisId}": {
+      "schema": "Analysis",
+      "description": "Cached analyses for locations."
+    },
+    "/users/{userId}/savedProblems/{problemId}": {
+      "schema": "SavedProblem",
+      "description": "User's collection of saved high-potential problems."
+    }
+  }
+}
