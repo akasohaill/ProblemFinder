@@ -1,8 +1,17 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { AnalysisResponse } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+
+// Model fallback chain - will try these in order
+const MODELS = [
+  "gemini-2.5-flash-lite", // fastest + high limits
+  "gemini-2.5-flash",      // best quality/free balance
+  "gemini-1.5-flash",      // stable fallback
+  "gemini-2.0-flash",      // lightweight fallback
+  "gemini-1.5-flash-8b",   // cheap/simple fallback
+  "gemini-1.5-pro"         // strongest fallback (if available)
+];
 
 export async function analyzeLocation(location: string): Promise<AnalysisResponse> {
   const prompt = `
@@ -11,6 +20,25 @@ export async function analyzeLocation(location: string): Promise<AnalysisRespons
     
     Focus ONLY on problems where people/businesses/governments are ALREADY losing money, time, efficiency, or productivity.
     Avoid "nice to have" ideas.
+
+    IMPORTANT:
+    - Problems must be highly practical and operationally specific.
+    - Avoid generic problems like "traffic", "healthcare issues", "education problems", etc.
+    - The problem should be specific enough that it can realistically be solved using:
+      - SaaS software
+      - mobile apps
+      - websites
+      - AI tools
+      - automation systems
+      - digital workflow tools
+      - business management platforms
+    - Focus on repetitive workflow inefficiencies, manual operations, coordination problems, inventory issues, scheduling gaps, payment tracking issues, communication inefficiencies, local business operational gaps, logistics inefficiencies, and outdated processes.
+
+    IMPORTANT FOR REVENUE ESTIMATES:
+    - Revenue projections MUST be realistic and conservative.
+    - Do NOT generate fantasy revenue numbers or billion-dollar assumptions.
+    - Base earning potential on realistic local adoption, affordability, and actual market conditions in the location.
+    - Prefer believable small-to-medium business opportunities over unrealistic unicorn-style projections.
     
     For the location "${location}", return exactly 5 problems in a valid JSON format.
     Each problem must include:
@@ -44,7 +72,7 @@ export async function analyzeLocation(location: string): Promise<AnalysisRespons
       "pricingModel": string,
       "breakEven": string,
       "growthPotential": string,
-      "problemPoints": string[], // 5 key points explaining WHY this is a major problem
+      "problemPoints": string[],
       "solutionOverview": string,
       "implementationStrategy": string
     }
@@ -57,24 +85,58 @@ export async function analyzeLocation(location: string): Promise<AnalysisRespons
       "heatmapRegions": { "region": string, "score": number }[]
     }
     
-    Return ONLY valid JSON.
+    Return ONLY valid JSON with structure: { "problems": [...], "marketSummary": {...} }
   `;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemma-3-12b-it",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json"
-      }
-    });
+  let lastError: Error | null = null;
 
-    const text = response.text;
-    if (!text) throw new Error("No response from AI");
+  // Try each model in sequence
+  for (let i = 0; i < MODELS.length; i++) {
+    const model = MODELS[i];
     
-    return JSON.parse(text);
-  } catch (error) {
-    console.error("AI Analysis Error:", error);
-    throw error;
+    try {
+      console.log(`Attempting with model: ${model} (${i + 1}/${MODELS.length})`);
+      
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+      
+      const text = response.text;
+      if (!text) {
+        throw new Error("No response from AI");
+      }
+      
+      const parsed = JSON.parse(text);
+      console.log(`✓ Success with model: ${model}`);
+      return parsed;
+      
+    } catch (error: any) {
+      lastError = error;
+      console.error(`✗ Model ${model} failed:`, error.message);
+      
+      // Check if it's a rate limit error
+      const isRateLimit = 
+        error.message?.includes('429') ||
+        error.message?.includes('rate limit') ||
+        error.message?.includes('quota') ||
+        error.status === 429;
+      
+      // If rate limit and not the last model, continue to next
+      if (isRateLimit && i < MODELS.length - 1) {
+        console.log(`Rate limit hit. Trying next model...`);
+        continue;
+      }
+      
+      // If it's not a rate limit error, or it's the last model, throw
+      if (i === MODELS.length - 1) {
+        throw new Error(`All models failed. Last error: ${error.message}`);
+      }
+    }
   }
+  
+  throw lastError || new Error("Analysis failed");
 }
