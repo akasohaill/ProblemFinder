@@ -62,7 +62,7 @@ export async function analyzeLocation(location: string): Promise<AnalysisRespons
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-lite",
+      model: "gemma-3-12b-it",
       contents: prompt,
       config: {
         responseMimeType: "application/json"
