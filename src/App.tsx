@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, MapPin, Zap, ChevronRight, BarChart3, Globe, AlertTriangle, ArrowLeft, Target, Wallet, Clock, Rocket, AlertCircle, ShieldCheck, Save, Check, BookMarked, X, Trash2 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { analyzeLocation } from './services/geminiService';
 import { AnalysisResponse, Problem } from './types';
+
 
 // --- Local Storage Helper ---
 const STORAGE_KEY = 'problemfinder_saved_ideas';
@@ -222,7 +223,7 @@ const SeverityBadge = ({ score }: { score: number }) => {
 };
 
 const ProblemCard = ({ problem, onClick }: { problem: Problem, onClick: () => void }) => (
-  <motion.div 
+  <motion.div
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
     onClick={onClick}
@@ -232,7 +233,7 @@ const ProblemCard = ({ problem, onClick }: { problem: Problem, onClick: () => vo
       <SeverityBadge score={problem.severity} />
       <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded text-slate-500 font-bold uppercase tracking-widest">{problem.urgency}</span>
     </div>
-    
+
     <h3 className="text-xl font-bold text-white mb-3 group-hover:text-brand-primary transition-colors">{problem.title}</h3>
     <p className="text-sm text-slate-400 mb-6 line-clamp-2 leading-relaxed">{problem.whoFaces}</p>
 
@@ -266,13 +267,13 @@ const DetailView = ({ problem, location, onBack, onSave }: { problem: Problem, l
         <button onClick={onBack} className="flex items-center gap-2 text-slate-500 hover:text-white transition-colors text-sm font-semibold tracking-tight">
           <ArrowLeft className="w-4 h-4" /> Back to Market Report
         </button>
-        
+
         <button
           onClick={handleSave}
           disabled={saved}
           className={cn(
             "flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-all",
-            saved 
+            saved
               ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 cursor-not-allowed"
               : "bg-brand-primary text-black hover:bg-brand-primary/90"
           )}
@@ -313,13 +314,13 @@ const DetailView = ({ problem, location, onBack, onSave }: { problem: Problem, l
               <SeverityBadge score={problem.severity} />
             </div>
             <h1 className="text-4xl md:text-6xl font-bold text-white tracking-tight leading-[1.1] mb-8">{problem.title}</h1>
-            
+
             <div className="space-y-6">
               <h2 className="text-xs font-black text-slate-500 uppercase tracking-[0.2em]">Problem Analysis</h2>
               <div className="grid gap-4">
                 {problem.problemPoints.map((p, i) => (
                   <div key={i} className="flex gap-4 p-4 rounded-2xl bg-white/[0.01] border border-white/5">
-                    <span className="text-brand-primary font-mono text-sm font-bold">0{i+1}</span>
+                    <span className="text-brand-primary font-mono text-sm font-bold">0{i + 1}</span>
                     <p className="text-slate-300 text-sm leading-relaxed">{p}</p>
                   </div>
                 ))}
@@ -418,46 +419,109 @@ export default function App() {
 
   const refreshSavedCount = () => setSavedCount(getSavedIdeas().length);
 
+  const [suggestions, setSuggestions] = useState<{ name: string; display: string; type: string }[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [activeSuggestion, setActiveSuggestion] = useState(-1);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const abortRef = useRef<AbortController>(undefined);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const fetchSuggestions = useCallback(async (query: string) => {
+    if (abortRef.current) abortRef.current.abort();
+    abortRef.current = new AbortController();
+    setLoadingSuggestions(true);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=6&addressdetails=1&accept-language=en`,
+        { signal: abortRef.current.signal }
+      );
+      const data = await res.json();
+      setSuggestions(
+        data.map((r: any) => ({
+          name: r.name || r.display_name.split(',')[0].trim(),
+          display: r.display_name,
+          type: r.type || r.class || 'place',
+        }))
+      );
+    } catch {
+      // aborted or network error — ignore
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  }, []);
+
+  const handleLocationChange = (val: string) => {
+    setLocation(val);
+    setActiveSuggestion(-1);
+    if (val.trim().length < 2) { setSuggestions([]); setShowSuggestions(false); return; }
+    setShowSuggestions(true);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => fetchSuggestions(val.trim()), 350);
+  };
+
+  const handleSuggestionSelect = (name: string) => {
+    setLocation(name);
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setActiveSuggestion(-1);
+    inputRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showSuggestions || !suggestions.length) {
+      if (e.key === 'Enter') handleAnalyze();
+      return;
+    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveSuggestion(p => Math.min(p + 1, suggestions.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveSuggestion(p => Math.max(p - 1, -1)); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (activeSuggestion >= 0) handleSuggestionSelect(suggestions[activeSuggestion].name);
+      else { setShowSuggestions(false); handleAnalyze(); }
+    } else if (e.key === 'Escape') { setShowSuggestions(false); setActiveSuggestion(-1); }
+  };
+
   React.useEffect(() => {
 
-  const pushState = () => {
-    window.history.pushState(
-      { page: "problemfinder" },
-      "",
-      window.location.href
-    );
-  };
+    const pushState = () => {
+      window.history.pushState(
+        { page: "problemfinder" },
+        "",
+        window.location.href
+      );
+    };
 
-  // Push initial state
-  pushState();
+    // Push initial state
+    pushState();
 
-  const handlePopState = () => {
+    const handlePopState = () => {
 
-    const shouldLeave = window.confirm(
-      "Are you sure you want to exit ProblemFinder AI?"
-    );
+      const shouldLeave = window.confirm(
+        "Are you sure you want to exit ProblemFinder AI?"
+      );
 
-    if (shouldLeave) {
+      if (shouldLeave) {
 
-      // Remove listener before going back
+        // Remove listener before going back
+        window.removeEventListener("popstate", handlePopState);
+
+        window.history.back();
+
+      } else {
+
+        // Keep user inside app
+        pushState();
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
       window.removeEventListener("popstate", handlePopState);
+    };
 
-      window.history.back();
-
-    } else {
-
-      // Keep user inside app
-      pushState();
-    }
-  };
-
-  window.addEventListener("popstate", handlePopState);
-
-  return () => {
-    window.removeEventListener("popstate", handlePopState);
-  };
-
-}, []);
+  }, []);
 
   React.useEffect(() => {
     window.scrollTo(0, 0);
@@ -501,14 +565,14 @@ export default function App() {
       <main className="pt-32 pb-20 px-6 max-w-7xl mx-auto">
         <AnimatePresence mode="wait">
           {!analysis && !loading && !selectedProblem && (
-            <motion.div 
+            <motion.div
               key="landing"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
               className="flex flex-col items-center justify-center py-20 text-center"
             >
-               <div className="mb-6 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-slate-400 text-[11px] font-bold uppercase tracking-widest">
+              <div className="mb-6 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-slate-400 text-[11px] font-bold uppercase tracking-widest">
                 <ShieldCheck className="w-3.5 h-3.5 text-brand-primary" />
                 Verified Market Intelligence
               </div>
@@ -521,24 +585,67 @@ export default function App() {
               </p>
 
               <div className="w-full max-w-xl group relative">
-                <div className="absolute -inset-1 bg-gradient-to-r from-brand-primary to-brand-secondary rounded-2xl blur opacity-20 group-focus-within:opacity-40 transition duration-500"></div>
+                <div className="absolute -inset-1 bg-gradient-to-r from-brand-primary to-brand-secondary rounded-2xl blur opacity-20 group-focus-within:opacity-40 transition duration-500" />
                 <div className="relative flex items-center bg-[#090e1a] rounded-2xl border border-white/10">
                   <MapPin className="absolute left-6 w-5 h-5 text-brand-primary" />
-                  <input 
-                    type="text" 
+                  <input
+                    ref={inputRef}
+                    type="text"
                     value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAnalyze()}
+                    onChange={(e) => handleLocationChange(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onFocus={() => { if (suggestions.length) setShowSuggestions(true); }}
+                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                     placeholder="Search location (e.g. India, Japan, Berlin...)"
                     className="w-full pl-16 pr-32 py-5 rounded-2xl outline-none text-lg text-white bg-transparent"
+                    autoComplete="off"
                   />
-                  <button 
+                  <button
                     onClick={handleAnalyze}
                     className="absolute right-2 bg-brand-primary text-black font-bold px-6 py-3 rounded-xl hover:bg-brand-primary/90 transition-all text-sm"
                   >
                     Analyze
                   </button>
                 </div>
+
+                {/* Autocomplete Dropdown */}
+                {showSuggestions && (location.trim().length >= 2) && (
+                  <div className="absolute top-[calc(100%+8px)] left-0 right-0 z-50 bg-[#0c1426] border border-white/8 rounded-2xl overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+                    {loadingSuggestions && !suggestions.length ? (
+                      <div className="flex items-center gap-3 px-5 py-4 text-slate-500 text-sm">
+                        <div className="w-4 h-4 border-2 border-brand-primary/20 border-t-brand-primary rounded-full animate-spin" />
+                        Searching locations…
+                      </div>
+                    ) : suggestions.length === 0 ? (
+                      <div className="px-5 py-4 text-slate-500 text-sm">No locations found</div>
+                    ) : (
+                      <>
+                        <div className="px-4 pt-3 pb-1 text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">Suggestions</div>
+                        {suggestions.map((s, i) => (
+                          <div
+                            key={i}
+                            onMouseDown={(e) => { e.preventDefault(); handleSuggestionSelect(s.name); }}
+                            className={cn(
+                              "flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors",
+                              i === activeSuggestion ? "bg-brand-primary/10" : "hover:bg-white/[0.04]"
+                            )}
+                          >
+                            <div className="w-8 h-8 rounded-lg bg-brand-primary/10 border border-brand-primary/10 flex items-center justify-center shrink-0">
+                              <MapPin className="w-3.5 h-3.5 text-brand-primary" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-semibold text-slate-200 truncate">{s.name}</div>
+                              <div className="text-[11px] text-slate-500 truncate">{s.display.replace(s.name + ', ', '')}</div>
+                            </div>
+                            <span className="text-[9px] font-black uppercase tracking-widest text-brand-primary bg-brand-primary/10 px-2 py-0.5 rounded shrink-0">
+                              {s.type}
+                            </span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -578,7 +685,7 @@ export default function App() {
                   </h3>
                   <p className="text-sm text-slate-300 leading-relaxed mb-6">{analysis.marketSummary.summary}</p>
                   <div className="space-y-4">
-                   <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Hot Sectors</h4>
+                    <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Hot Sectors</h4>
                     <div className="flex flex-wrap gap-2">
                       {analysis.marketSummary.topSectors.map((s, i) => (
                         <span key={i} className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs font-medium text-slate-300">{s}</span>
@@ -586,7 +693,7 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-                
+
                 <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
                   {analysis.problems.map((prob, idx) => (
                     <ProblemCard key={idx} problem={prob} onClick={() => setSelectedProblem(prob)} />
