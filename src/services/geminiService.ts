@@ -7,10 +7,10 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 const MODELS = [
   "gemini-2.5-flash-lite", // fastest + high limits
   "gemini-2.5-flash",      // best quality/free balance
-  "gemini-1.5-flash",      // stable fallback
-  "gemini-2.0-flash",      // lightweight fallback
-  "gemini-1.5-flash-8b",   // cheap/simple fallback
-  "gemini-1.5-pro"         // strongest fallback (if available)
+  "gemini-3-flash",      // stable fallback
+  "gemini-2.0-flash-lite",      // lightweight fallback
+  "gemini-2.0-flash",   // cheap/simple fallback
+  "gemini-2.5-pro"         // strongest fallback (if available)
 ];
 
 export async function analyzeLocation(location: string): Promise<AnalysisResponse> {
